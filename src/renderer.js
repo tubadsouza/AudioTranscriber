@@ -4,6 +4,25 @@ let mediaRecorder;
 let audioChunks = [];
 let isRecording = false;
 
+document.getElementById('closeButton').addEventListener('click', () => {
+    ipcRenderer.send('close-app');
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('Requesting accessibility status...');
+    ipcRenderer.send('request-accessibility-status');
+});
+
+// Update the accessibility status handler
+ipcRenderer.on('accessibility-status', (event, isEnabled) => {
+    console.log('Received accessibility status:', isEnabled);
+    const statusEl = document.getElementById('accessibilityStatus');
+    // Use HTML entity for checkmark
+    const checkmark = isEnabled ? '&#x2713;' : '&#x2717;';
+    statusEl.innerHTML = `Accessibility: ${isEnabled ? 'Enabled ' + checkmark : 'Disabled ' + checkmark}`;
+    statusEl.style.color = isEnabled ? '#4CAF50' : '#ff4444';
+});
+
 async function startRecording() {
     if (!isRecording) {
         try {
@@ -109,11 +128,3 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 console.log('Renderer process setup complete');
-
-ipcRenderer.on('accessibility-status', (event, isEnabled) => {
-    const statusEl = document.getElementById('accessibilityStatus');
-    if (statusEl) {
-        statusEl.textContent = `Accessibility: ${isEnabled ? 'Enabled ✅' : 'Disabled ❌'}`;
-        statusEl.style.color = isEnabled ? '#4CAF50' : '#ff4444';
-    }
-});

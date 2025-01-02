@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { app, ipcMain, Tray, BrowserWindow, nativeImage, globalShortcut, systemPreferences, Notification, shell } = require('electron');
+const { app, ipcMain, Tray, BrowserWindow, nativeImage, globalShortcut, systemPreferences, Notification, shell, Menu } = require('electron');
 const path = require('path');
 const OpenAI = require('openai');
 const os = require('os');
@@ -45,28 +45,25 @@ function createTemplateImage() {
 function checkAccessibilityPermissions() {
     try {
         const isAccessibilityEnabled = systemPreferences.isTrustedAccessibilityClient(true);
-        console.log('Accessibility permission status:', isAccessibilityEnabled);
-
-        // Send status to renderer
-        if (mainWindow) {
+        console.log('Checking accessibility permissions:', isAccessibilityEnabled);
+        
+        if (mainWindow && mainWindow.webContents) {
             mainWindow.webContents.send('accessibility-status', isAccessibilityEnabled);
         }
 
         if (!isAccessibilityEnabled) {
             new Notification({ 
                 title: 'Accessibility Permission Required',
-                body: 'Please enable accessibility in System Settings > Privacy & Security > Privacy > Accessibility'
+                body: 'Please enable accessibility in System Settings > Privacy & Security > Accessibility'
             }).show();
             
+            // Open System Settings directly to accessibility
             shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility');
         }
         
         return isAccessibilityEnabled;
     } catch (error) {
         console.error('Error checking accessibility permissions:', error);
-        if (mainWindow) {
-            mainWindow.webContents.send('accessibility-status', false);
-        }
         return false;
     }
 }
@@ -81,10 +78,25 @@ function createWindow() {
             webPreferences: {
                 nodeIntegration: true,
                 contextIsolation: false,
+                devTools: true
             }
         });
 
         mainWindow.loadFile(path.join(__dirname, 'index.html'));
+
+        // Enable right-click menu
+        mainWindow.webContents.on('context-menu', (e, params) => {
+            Menu.buildFromTemplate([
+                { label: 'Inspect Element', click: () => mainWindow.webContents.inspectElement(params.x, params.y) },
+                { type: 'separator' },
+                { label: 'Toggle Developer Tools', click: () => mainWindow.webContents.toggleDevTools() }
+            ]).popup();
+        });
+
+        mainWindow.webContents.on('did-finish-load', () => {
+            const isAccessibilityEnabled = checkAccessibilityPermissions();
+            mainWindow.webContents.send('accessibility-status', isAccessibilityEnabled);
+        });
 
         mainWindow.on('close', (event) => {
             if (!forceQuit) {
@@ -92,8 +104,6 @@ function createWindow() {
                 mainWindow.hide();
             }
         });
-
-        mainWindow.webContents.openDevTools();
     }
     return mainWindow;
 }
@@ -242,4 +252,10 @@ app.on('before-quit', () => {
         mainWindow.removeAllListeners('close');
         mainWindow.close();
     }
+});
+
+// Add this IPC handler if it's not already there
+ipcMain.on('request-accessibility-status', (event) => {
+    const isAccessibilityEnabled = checkAccessibilityPermissions();
+    event.sender.send('accessibility-status', isAccessibilityEnabled);
 }); 
