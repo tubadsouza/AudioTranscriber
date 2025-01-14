@@ -166,34 +166,47 @@ app.whenReady().then(() => {
 ipcMain.handle('transcribe-audio', async (event, audioBuffer) => {
     try {
         console.log('\n--- Starting Transcription Process ---');
-        console.log('Main Process: Received audio buffer size:', audioBuffer.byteLength, 'bytes');
+        console.log('Audio buffer size:', audioBuffer.byteLength);
         
         const openaiClient = initializeOpenAI();
+        const tempPath = path.join(app.getPath('userData'), `audio-${Date.now()}.wav`);
         
         const buffer = Buffer.from(audioBuffer);
-        const tempPath = path.join(os.tmpdir(), `audio-${Date.now()}.wav`);
         fs.writeFileSync(tempPath, buffer);
         
-        console.log('Main Process: Temp file created at:', tempPath);
-        console.log('Main Process: File size:', fs.statSync(tempPath).size, 'bytes');
-        console.log('Main Process: Starting OpenAI transcription...');
-
+        // First, get the transcription
         const transcription = await openaiClient.audio.transcriptions.create({
             file: fs.createReadStream(tempPath),
             model: "whisper-1",
             response_format: "text"
         });
         
+        // Then, format it using ChatGPT
+        const formattedResponse = await openaiClient.chat.completions.create({
+            model: "gpt-3.5-turbo",
+            messages: [
+                {
+                    role: "system",
+                    content: "You are a helpful assistant that formats text into clean markdown. Keep the original meaning but improve formatting, add headers where appropriate, and fix any obvious transcription errors."
+                },
+                {
+                    role: "user",
+                    content: transcription
+                }
+            ],
+            temperature: 0.7
+        });
+
+        // Clean up the temp file
         fs.unlinkSync(tempPath);
         
-        console.log('\n=== Transcription Result ===');
-        console.log(transcription);
-        console.log('===========================\n');
-        
-        return transcription;
+        // Return the formatted text
+        const formattedText = formattedResponse.choices[0].message.content;
+        console.log('Transcription formatted successfully');
+        return formattedText;
+
     } catch (error) {
-        console.error('\n!!! Transcription Error !!!');
-        console.error('Error details:', error);
+        console.error('Transcription error:', error);
         throw error;
     }
 });
