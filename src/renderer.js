@@ -1,10 +1,28 @@
 const { ipcRenderer } = require('electron');
 const { marked } = require('marked');
+const Mousetrap = require('mousetrap');
 
 let mediaRecorder;
 let audioChunks = [];
 let isRecording = false;
-let keyInterval;
+
+// Setup Mousetrap for shift+z
+Mousetrap.bind('shift+z', () => {
+    if (!isRecording) {
+        console.log('Starting recording (keydown)');
+        startRecording();
+        document.getElementById('startRecording').textContent = 'Stop Recording';
+        document.getElementById('startRecording').classList.add('recording');
+        isRecording = true;
+    }
+}, 'keydown');
+
+Mousetrap.bind('shift+z', () => {
+    if (isRecording) {
+        console.log('Stopping recording (keyup)');
+        stopRecording();
+    }
+}, 'keyup');
 
 document.getElementById('closeButton').addEventListener('click', () => {
     ipcRenderer.send('close-app');
@@ -124,35 +142,4 @@ document.getElementById('copyText').addEventListener('click', async () => {
         copyButton.classList.remove('success');
         copyButton.textContent = 'Copy Text';
     }, 2000);
-});
-
-// Key handling
-document.addEventListener('keydown', async (event) => {
-    // Only start if not already recording and all required keys are pressed
-    if (!isRecording && event.key === ' ' && event.shiftKey && event.metaKey) {
-        console.log('Starting recording from key press');
-        await startRecording();
-        document.getElementById('startRecording').textContent = 'Stop Recording';
-        document.getElementById('startRecording').classList.add('recording');
-        isRecording = true;
-        
-        // Start checking for key release
-        keyInterval = setInterval(() => {
-            // If any of the required keys are released, stop recording
-            if (!event.shiftKey || !event.metaKey) {
-                stopRecording();
-                clearInterval(keyInterval);
-            }
-        }, 100);
-    }
-});
-
-// When any key is released
-document.addEventListener('keyup', async (event) => {
-    // If we're recording and any of our keys were released, stop recording
-    if (isRecording && (event.key === ' ' || event.key === 'Shift' || event.key === 'Meta')) {
-        console.log('Stopping recording from key release');
-        clearInterval(keyInterval);
-        await stopRecording();
-    }
 });
