@@ -1,4 +1,5 @@
 const { ipcRenderer } = require('electron');
+const { marked } = require('marked');
 
 let mediaRecorder;
 let audioChunks = [];
@@ -43,21 +44,23 @@ async function startRecording() {
             };
 
             mediaRecorder.onstop = async () => {
-                console.log('Renderer: Processing recording...');
-                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-                const buffer = await audioBlob.arrayBuffer();
+                console.log('MediaRecorder stopped, chunks:', audioChunks.length);
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                console.log('Audio blob size:', audioBlob.size);
+                
+                const arrayBuffer = await audioBlob.arrayBuffer();
+                console.log('Array buffer size:', arrayBuffer.byteLength);
                 
                 try {
-                    const result = await ipcRenderer.invoke('transcribe-audio', buffer);
-                    console.log('Renderer: Transcription received:', result);
-                    
-                    const transcriptionEl = document.getElementById('transcription');
-                    if (transcriptionEl) {
-                        transcriptionEl.textContent = result;
-                    }
+                    const transcription = await ipcRenderer.invoke('transcribe-audio', arrayBuffer);
+                    // Convert markdown to HTML before displaying
+                    document.getElementById('transcription').innerHTML = marked.parse(transcription);
                 } catch (error) {
-                    console.error('Renderer: Transcription error:', error);
+                    console.error('Transcription error:', error);
+                    document.getElementById('transcription').textContent = 'Error: ' + error.message;
                 }
+                
+                audioChunks = [];
             };
 
             mediaRecorder.start();
