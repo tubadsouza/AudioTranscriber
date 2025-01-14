@@ -109,24 +109,22 @@ function createWindow() {
 }
 
 function registerShortcuts() {
-    console.log('Registering shortcuts...');
-    globalShortcut.unregisterAll();
-
-    const startSuccess = globalShortcut.register('CommandOrControl+Shift+R', () => {
-        console.log('Start shortcut triggered!');
-        if (mainWindow) {
-            mainWindow.webContents.send('start-recording');
+    // We'll use IPC to communicate keyboard events
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+        // Check for Space key with Command and Shift modifiers
+        if (input.key === ' ' && input.control && input.shift) {
+            if (input.type === 'keyDown') {
+                console.log('Keys pressed - starting recording');
+                mainWindow.webContents.send('start-recording');
+            } else if (input.type === 'keyUp') {
+                console.log('Keys released - stopping recording');
+                mainWindow.webContents.send('stop-recording');
+            }
         }
     });
 
-    const stopSuccess = globalShortcut.register('CommandOrControl+Shift+S', () => {
-        console.log('Stop shortcut triggered!');
-        if (mainWindow) {
-            mainWindow.webContents.send('stop-recording');
-        }
-    });
-
-    console.log('Shortcuts registered:', { start: startSuccess, stop: stopSuccess });
+    // Log registration
+    console.log('Keyboard event handlers registered');
 }
 
 app.whenReady().then(() => {

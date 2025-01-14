@@ -4,23 +4,35 @@
     <title>Audio Transcriber</title>
     <style>
         body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
             padding: 20px;
-            font-family: system-ui;
+            background-color: #ffffff;
+            user-select: none;
         }
         #accessibilityStatus {
-            margin-bottom: 10px;
-            font-size: 12px;
-            font-family: system-ui;
+            color: #4CAF50;
+            margin-bottom: 20px;
         }
-        #recordButton {
+        #startRecording {
             width: 100%;
-            padding: 10px;
-            margin: 10px 0;
+            padding: 15px;
+            font-size: 16px;
             background-color: #4CAF50;
             color: white;
             border: none;
-            border-radius: 4px;
+            border-radius: 5px;
             cursor: pointer;
+            margin-bottom: 20px;
+        }
+        #startRecording.recording {
+            background-color: #ff4444;
+        }
+        #startRecording:hover {
+            background-color: #45a049;
+        }
+        #startRecording.recording:hover {
+            background-color: #cc0000;
         }
         #transcription {
             width: 100%;
@@ -30,48 +42,48 @@
             border-radius: 5px;
             margin-bottom: 20px;
             white-space: pre-wrap;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
         }
         #closeButton {
             position: absolute;
             top: 10px;
             right: 10px;
-            padding: 5px 10px;
             background-color: #ff4444;
             color: white;
             border: none;
-            border-radius: 4px;
+            border-radius: 5px;
+            padding: 8px 15px;
             cursor: pointer;
-            font-size: 12px;
         }
         #closeButton:hover {
-            background-color: #ff0000;
+            background-color: #cc0000;
         }
-        /* Markdown styles */
-        #transcription h1 { font-size: 1.8em; margin: 0.5em 0; }
-        #transcription h2 { font-size: 1.5em; margin: 0.5em 0; }
-        #transcription h3 { font-size: 1.3em; margin: 0.5em 0; }
-        #transcription ul, #transcription ol { padding-left: 2em; }
-        #transcription li { margin: 0.3em 0; }
-        #transcription p { margin: 0.5em 0; }
-        #transcription code { 
-            background: #f5f5f5;
-            padding: 0.2em 0.4em;
-            border-radius: 3px;
-            font-family: monospace;
-        }
-        #transcription pre {
-            background: #f5f5f5;
-            padding: 1em;
+        #copyText {
+            width: 100%;
+            padding: 15px;
+            font-size: 16px;
+            background-color: #2196F3;
+            color: white;
+            border: none;
             border-radius: 5px;
-            overflow-x: auto;
+            cursor: pointer;
+            margin-bottom: 20px;
+        }
+        #copyText:hover {
+            background-color: #1976D2;
+        }
+        #copyText.success {
+            background-color: #4CAF50;
+        }
+        .hidden {
+            display: none;
         }
     </style>
 </head>
 <body>
-    <button id="closeButton">Close App</button>
     <div id="accessibilityStatus">Checking accessibility...</div>
-    <button id="recordButton">Start Recording</button>
+    <button id="closeButton">Close App</button>
+    <button id="startRecording">Start Recording</button>
+    <button id="copyText" class="hidden">Copy Text</button>
     <div id="transcription"></div>
     <script src="renderer.js"></script>
 </body>
