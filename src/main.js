@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { app, ipcMain, Tray, BrowserWindow, nativeImage, globalShortcut, systemPreferences, Notification, shell, Menu } = require('electron');
+const { app, ipcMain, Tray, BrowserWindow, nativeImage, globalShortcut, systemPreferences, Notification, shell, Menu, powerMonitor } = require('electron');
 const path = require('path');
 const OpenAI = require('openai');
 const os = require('os');
@@ -21,6 +21,10 @@ function initializeOpenAI() {
 let tray = null;
 let mainWindow = null;
 let forceQuit = false;
+let isRecording = false;
+let shiftPressed = false;
+let zPressed = false;
+let recordingTimeout = null;
 
 function createTemplateImage() {
     const image = nativeImage.createEmpty();
@@ -108,26 +112,59 @@ function createWindow() {
     return mainWindow;
 }
 
+function createTray() {
+    const image = createTemplateImage();
+    tray = new Tray(image);
+    tray.setToolTip('Audio Transcriber');
+}
+
 function registerShortcuts() {
-    // We'll use IPC to communicate keyboard events
-    mainWindow.webContents.on('before-input-event', (event, input) => {
-        // Check for Space key with Command and Shift modifiers
-        if (input.key === ' ' && input.control && input.shift) {
-            if (input.type === 'keyDown') {
-                console.log('Keys pressed - starting recording');
-                mainWindow.webContents.send('start-recording');
-            } else if (input.type === 'keyUp') {
-                console.log('Keys released - stopping recording');
-                mainWindow.webContents.send('stop-recording');
+    // Register for Shift+Z down
+    globalShortcut.register('Shift+Z', () => {
+        if (!isRecording) {
+            isRecording = true;
+            console.log('Starting recording');
+            if (!mainWindow) {
+                createWindow();
             }
+            mainWindow.webContents.send('start-recording');
+            
+            // Set a very short timeout to check for key release
+            recordingTimeout = setInterval(() => {
+                // Check system idle time
+                const idleTime = powerMonitor.getSystemIdleTime();
+                console.log('Idle time:', idleTime);
+                
+                // If system has been idle for even a fraction of a second
+                if (idleTime > 0 && isRecording) {
+                    clearInterval(recordingTimeout);
+                    isRecording = false;
+                    console.log('Keys released - stopping recording');
+                    if (mainWindow) {
+                        mainWindow.webContents.send('stop-recording');
+                    }
+                }
+            }, 100);
         }
     });
-
-    // Log registration
-    console.log('Keyboard event handlers registered');
 }
 
 app.whenReady().then(() => {
+    console.log('Testing key-sender...');
+    try {
+        // Just a simple test
+        ks.setOption('startDelayMillis', 0);
+        console.log('Key sender initialized');
+    } catch (error) {
+        console.error('Key sender error:', error);
+    }
+    console.log('Testing robotjs...');
+    try {
+        const mousePos = robot.getMousePos();
+        console.log('Mouse position:', mousePos);
+    } catch (error) {
+        console.error('Robotjs error:', error);
+    }
     try {
         // Initial check
         let hasAccessibility = checkAccessibilityPermissions();
@@ -139,11 +176,8 @@ app.whenReady().then(() => {
             console.log('Rechecked accessibility:', hasAccessibility);
         });
 
-        const image = createTemplateImage();
-        tray = new Tray(image);
-        tray.setToolTip('Audio Transcriber');
-
-        mainWindow = createWindow();
+        createTray();
+        createWindow();
         registerShortcuts();
 
         tray.on('click', (event, bounds) => {
@@ -210,6 +244,9 @@ ipcMain.handle('transcribe-audio', async (event, audioBuffer) => {
 });
 
 app.on('will-quit', () => {
+    if (recordingTimeout) {
+        clearInterval(recordingTimeout);
+    }
     globalShortcut.unregisterAll();
 });
 
