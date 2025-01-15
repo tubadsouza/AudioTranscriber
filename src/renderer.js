@@ -1,28 +1,9 @@
 const { ipcRenderer } = require('electron');
 const { marked } = require('marked');
-const Mousetrap = require('mousetrap');
 
 let mediaRecorder;
 let audioChunks = [];
 let isRecording = false;
-
-// Setup Mousetrap for shift+z
-Mousetrap.bind('shift+z', () => {
-    if (!isRecording) {
-        console.log('Starting recording (keydown)');
-        startRecording();
-        document.getElementById('startRecording').textContent = 'Stop Recording';
-        document.getElementById('startRecording').classList.add('recording');
-        isRecording = true;
-    }
-}, 'keydown');
-
-Mousetrap.bind('shift+z', () => {
-    if (isRecording) {
-        console.log('Stopping recording (keyup)');
-        stopRecording();
-    }
-}, 'keyup');
 
 document.getElementById('closeButton').addEventListener('click', () => {
     ipcRenderer.send('close-app');
@@ -143,4 +124,50 @@ document.getElementById('copyText').addEventListener('click', async () => {
         copyButton.classList.remove('success');
         copyButton.textContent = 'Copy Text';
     }, 2000);
+});
+
+mediaRecorder.addEventListener('stop', async () => {
+    console.log('MediaRecorder stopped, processing audio...');
+    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+    console.log('Audio blob size:', audioBlob.size);
+    
+    const reader = new FileReader();
+    reader.readAsDataURL(audioBlob);
+    reader.onloadend = async () => {
+        try {
+            console.log('Converting audio to base64...');
+            const base64Audio = reader.result;
+            console.log('Sending to transcription service...');
+            const response = await fetch('http://localhost:5000/transcribe', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ audio: base64Audio }),
+            });
+            const data = await response.json();
+            console.log('Received transcription:', data.text);
+            
+            // Update UI
+            const transcriptionDiv = document.getElementById('transcription');
+            transcriptionDiv.innerHTML = data.text;
+            
+            // Send to main process with more logging
+            console.log('Preparing to send transcription to main process...');
+            ipcRenderer.send('transcription-ready', {
+                text: data.text,
+                activeWindow: window.activeWindow || 'unknown'
+            });
+            console.log('Transcription sent to main process');
+            
+        } catch (error) {
+            console.error('Error processing transcription:', error);
+        }
+    };
+});
+
+// Add listener for active window info from main process
+ipcRenderer.on('active-window-update', (event, windowName) => {
+    console.log('Active window updated:', windowName);
+    window.activeWindow = windowName;
 });
