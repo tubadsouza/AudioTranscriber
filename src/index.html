@@ -77,12 +77,19 @@
         .hidden {
             display: none;
         }
+        .shortcut-hint {
+            color: #666;
+            text-align: center;
+            margin: -15px 0 20px;
+            font-size: 13px;
+        }
     </style>
 </head>
 <body>
     <div id="accessibilityStatus">Checking accessibility...</div>
     <button id="closeButton">Close App</button>
     <button id="startRecording">Start Recording</button>
+    <div class="shortcut-hint">Hold Shift+Z to record</div>
     <button id="copyText" class="hidden">Copy Text</button>
     <div id="transcription"></div>
     <script src="renderer.js"></script>
