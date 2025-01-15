@@ -4,6 +4,7 @@ const path = require('path');
 const OpenAI = require('openai');
 const os = require('os');
 const fs = require('fs');
+const { exec } = require('child_process');
 
 // Initialize OpenAI client
 let openai = null;
@@ -118,8 +119,23 @@ function createTray() {
     tray.setToolTip('Audio Transcriber');
 }
 
+function getActiveWindow() {
+    return new Promise((resolve) => {
+        if (process.platform === 'darwin') {  // macOS
+            exec('osascript -e "tell application \\"System Events\\" to get name of first application process whose frontmost is true"', (error, stdout) => {
+                if (error) {
+                    console.error('Error getting active window:', error);
+                    resolve(null);
+                } else {
+                    console.log('Active application:', stdout.trim());
+                    resolve(stdout.trim());
+                }
+            });
+        }
+    });
+}
+
 function registerShortcuts() {
-    // Register for Shift+Z down
     globalShortcut.register('Shift+Z', () => {
         if (!isRecording) {
             isRecording = true;
@@ -129,22 +145,22 @@ function registerShortcuts() {
             }
             mainWindow.webContents.send('start-recording');
             
-            // Set a very short timeout to check for key release
-            recordingTimeout = setInterval(() => {
-                // Check system idle time
+            recordingTimeout = setInterval(async () => {
                 const idleTime = powerMonitor.getSystemIdleTime();
-                console.log('Idle time:', idleTime);
                 
-                // If system has been idle for even a fraction of a second
                 if (idleTime > 0 && isRecording) {
                     clearInterval(recordingTimeout);
                     isRecording = false;
                     console.log('Keys released - stopping recording');
+                    
+                    const activeApp = await getActiveWindow();
+                    console.log('Recording stopped in application:', activeApp);
+                    
                     if (mainWindow) {
-                        mainWindow.webContents.send('stop-recording');
+                        mainWindow.webContents.send('stop-recording', { activeApp });
                     }
                 }
-            }, 100);
+            }, 50);
         }
     });
 }

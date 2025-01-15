@@ -50,9 +50,10 @@ ipcRenderer.on('start-recording', async () => {
     }
 });
 
-ipcRenderer.on('stop-recording', async () => {
+ipcRenderer.on('stop-recording', (event, data) => {
     if (isRecording) {
-        await stopRecording();
+        console.log('Stopping recording in app:', data?.activeApp);
+        stopRecording(data?.activeApp);
     }
 });
 
@@ -99,11 +100,9 @@ async function startRecording() {
     }
 }
 
-async function stopRecording() {
+async function stopRecording(activeApp) {
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-        console.log('Stopping recording...');
         mediaRecorder.stop();
-        // Stop all tracks in the stream
         mediaRecorder.stream.getTracks().forEach(track => {
             track.stop();
         });
@@ -112,6 +111,8 @@ async function stopRecording() {
         button.textContent = 'Start Recording';
         button.classList.remove('recording');
         isRecording = false;
+        
+        console.log('Recording stopped in:', activeApp);
     }
 }
 
