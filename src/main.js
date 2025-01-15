@@ -251,6 +251,17 @@ ipcMain.handle('transcribe-audio', async (event, audioBuffer) => {
         // Return the formatted text
         const formattedText = formattedResponse.choices[0].message.content;
         console.log('Transcription formatted successfully');
+        
+        // Get the active window right when transcription is ready
+        const activeWindow = await getActiveWindow();
+        console.log('Ready to inject text into:', activeWindow);
+        
+        // Prepare the text injection
+        if (activeWindow) {
+            console.log('Text to inject:', formattedText);
+            // We'll add the actual injection code in the next step
+        }
+        
         return formattedText;
 
     } catch (error) {

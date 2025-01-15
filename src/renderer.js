@@ -152,8 +152,8 @@ mediaRecorder.addEventListener('stop', async () => {
             const transcriptionDiv = document.getElementById('transcription');
             transcriptionDiv.innerHTML = data.text;
             
-            // Send to main process with more logging
-            console.log('Preparing to send transcription to main process...');
+            // Add this right after setting the transcription text
+            console.log('Sending transcription to main process:', data.text);
             ipcRenderer.send('transcription-ready', {
                 text: data.text,
                 activeWindow: window.activeWindow || 'unknown'
