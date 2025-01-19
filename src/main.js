@@ -252,14 +252,30 @@ ipcMain.handle('transcribe-audio', async (event, audioBuffer) => {
         const formattedText = formattedResponse.choices[0].message.content;
         console.log('Transcription formatted successfully');
         
-        // Get the active window right when transcription is ready
         const activeWindow = await getActiveWindow();
         console.log('Ready to inject text into:', activeWindow);
         
-        // Prepare the text injection
-        if (activeWindow) {
-            console.log('Text to inject:', formattedText);
-            // We'll add the actual injection code in the next step
+        if (activeWindow === 'Cursor') {
+            // Copy to clipboard
+            console.log('Copying to clipboard:', formattedText);
+            const clipboard = require('electron').clipboard;
+            clipboard.writeText(formattedText);
+            
+            // Verify clipboard content
+            const clipboardText = clipboard.readText();
+            console.log('Clipboard content:', clipboardText);
+            
+            // Small delay to ensure clipboard is ready
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            // Simulate CMD+V using applescript
+            exec(`osascript -e 'tell application "System Events" to keystroke "v" using command down'`, (error) => {
+                if (error) {
+                    console.error('Failed to paste:', error);
+                } else {
+                    console.log('Text pasted successfully');
+                }
+            });
         }
         
         return formattedText;
