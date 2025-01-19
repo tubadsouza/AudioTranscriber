@@ -2,8 +2,8 @@ const { ipcRenderer } = require('electron');
 const { marked } = require('marked');
 
 let mediaRecorder;
-let audioChunks = [];
 let isRecording = false;
+let chunks = [];
 
 document.getElementById('closeButton').addEventListener('click', () => {
     ipcRenderer.send('close-app');
@@ -38,62 +38,78 @@ ipcRenderer.on('stop-recording', (event, data) => {
     }
 });
 
+function updateStatus(message, processing = false) {
+    console.log('Sending status update:', message);
+    ipcRenderer.send('update-status-from-renderer', { message, processing });
+}
+
+// Add this listener for status updates from main process
+ipcRenderer.on('transcription-status', (event, data) => {
+    console.log('Received transcription status update:', data);
+    updateStatus(data.message, data.processing);
+});
+
 async function startRecording() {
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         console.log('Got media stream:', stream.getAudioTracks()[0].label);
         
-        mediaRecorder = new MediaRecorder(stream, {
-            mimeType: 'audio/webm',
-            audioBitsPerSecond: 128000
-        });
+        mediaRecorder = new MediaRecorder(stream);
         
-        mediaRecorder.ondataavailable = (event) => {
-            console.log('Data available event:', event.data.size, 'bytes');
-            audioChunks.push(event.data);
+        mediaRecorder.ondataavailable = (e) => {
+            console.log('Data available event:', e.data.size, 'bytes');
+            chunks.push(e.data);
         };
         
         mediaRecorder.onstop = async () => {
-            console.log('MediaRecorder stopped, chunks:', audioChunks.length);
-            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-            console.log('Audio blob size:', audioBlob.size);
+            console.log('MediaRecorder stopped, chunks:', chunks.length);
+            updateStatus('Processing recording...', true);
             
-            const arrayBuffer = await audioBlob.arrayBuffer();
+            const blob = new Blob(chunks, { type: 'audio/wav' });
+            console.log('Audio blob size:', blob.size);
+            
+            const arrayBuffer = await blob.arrayBuffer();
             console.log('Array buffer size:', arrayBuffer.byteLength);
             
-            try {
-                const transcription = await ipcRenderer.invoke('transcribe-audio', arrayBuffer);
-                document.getElementById('transcription').innerHTML = marked.parse(transcription);
-                // Show the copy button when we have text
-                document.getElementById('copyText').classList.remove('hidden');
-            } catch (error) {
-                console.error('Transcription error:', error);
-                document.getElementById('transcription').textContent = 'Error: ' + error.message;
-            }
-            
-            audioChunks = [];
+            // Send to main process and wait for status updates
+            updateStatus('Processing with AI...', true);
+            ipcRenderer.send('audio-data', new Uint8Array(arrayBuffer));
+            chunks = [];
+            isRecording = false;
         };
         
+        chunks = [];
         mediaRecorder.start();
+        isRecording = true;
+        updateStatus('Recording in progress...', true);
         console.log('Started recording');
+        
+        // Auto-stop after 10 seconds
+        setTimeout(() => {
+            if (isRecording && mediaRecorder.state === 'recording') {
+                console.log('Auto-stopping recording after 10 seconds');
+                stopRecording();
+            }
+        }, 10000);
+        
     } catch (error) {
         console.error('Error starting recording:', error);
+        updateStatus('Error starting recording', false);
+        isRecording = false;
     }
 }
 
-async function stopRecording(activeApp) {
-    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+function stopRecording() {
+    console.log('Stop recording called, isRecording:', isRecording);
+    if (isRecording && mediaRecorder && mediaRecorder.state === 'recording') {
+        updateStatus('Recording stopped', false);
         mediaRecorder.stop();
-        mediaRecorder.stream.getTracks().forEach(track => {
-            track.stop();
-        });
         
-        const button = document.getElementById('startRecording');
-        button.textContent = 'Start Recording';
-        button.classList.remove('recording');
-        isRecording = false;
+        // Clean up the media stream
+        const tracks = mediaRecorder.stream.getTracks();
+        tracks.forEach(track => track.stop());
         
-        console.log('Recording stopped in:', activeApp);
+        console.log('Recording stopped');
     }
 }
 
@@ -128,7 +144,7 @@ document.getElementById('copyText').addEventListener('click', async () => {
 
 mediaRecorder.addEventListener('stop', async () => {
     console.log('MediaRecorder stopped, processing audio...');
-    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+    const audioBlob = new Blob(chunks, { type: 'audio/wav' });
     console.log('Audio blob size:', audioBlob.size);
     
     const reader = new FileReader();

@@ -26,6 +26,7 @@ let isRecording = false;
 let shiftPressed = false;
 let zPressed = false;
 let recordingTimeout = null;
+let statusBarWindow = null;
 
 function createTemplateImage() {
     const image = nativeImage.createEmpty();
@@ -165,6 +166,35 @@ function registerShortcuts() {
     });
 }
 
+function createStatusBar() {
+    if (statusBarWindow && !statusBarWindow.isDestroyed()) {
+        return statusBarWindow;
+    }
+
+    statusBarWindow = new BrowserWindow({
+        width: 200,
+        height: 40,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        hasShadow: false,
+        focusable: false,
+        type: 'panel',
+        webPreferences: {
+            nodeIntegration: true,
+            contextIsolation: false
+        }
+    });
+
+    const { screen } = require('electron');
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const { width } = primaryDisplay.workAreaSize;
+    statusBarWindow.setPosition(Math.floor(width/2 - 100), primaryDisplay.workAreaSize.height - 60);
+
+    statusBarWindow.loadFile(path.join(__dirname, 'statusbar.html'));
+}
+
 app.whenReady().then(() => {
     console.log('Testing key-sender...');
     try {
@@ -194,6 +224,7 @@ app.whenReady().then(() => {
 
         createTray();
         createWindow();
+        createStatusBar();
         registerShortcuts();
 
         tray.on('click', (event, bounds) => {
@@ -211,12 +242,46 @@ app.whenReady().then(() => {
     }
 });
 
+// Add this IPC handler near the top with other IPC handlers
+ipcMain.on('audio-data', async (event, audioBuffer) => {
+    console.log('Received audio data in main process, size:', audioBuffer.length);
+    try {
+        await handleRecording(audioBuffer);
+    } catch (error) {
+        console.error('Error handling recording:', error);
+        mainWindow.webContents.send('transcription-status', {
+            message: 'Error processing audio',
+            processing: false
+        });
+        
+        setTimeout(() => {
+            mainWindow.webContents.send('transcription-status', {
+                message: 'Ready',
+                processing: false
+            });
+        }, 2000);
+    }
+});
+
 async function formatTranscription(audioBuffer) {
     console.log('Starting formatTranscription...');
     
     const openai = new OpenAI({
         apiKey: process.env.OPENAI_API_KEY
     });
+
+    // First transcribe the audio
+    console.log('Creating audio file for OpenAI...');
+    const audioFile = new File([audioBuffer], 'audio.wav', { type: 'audio/wav' });
+    
+    console.log('Sending to Whisper API...');
+    const transcriptionResponse = await openai.audio.transcriptions.create({
+        file: audioFile,
+        model: 'whisper-1',
+    });
+
+    const transcribedText = transcriptionResponse.text;
+    console.log('Transcribed text:', transcribedText);
 
     const activeWindow = await getActiveWindow();
     let formattingInstructions = "";
@@ -238,6 +303,8 @@ async function formatTranscription(audioBuffer) {
             5. Never summarize or interpret - keep it as direct speech
             6. Never add phrases like "it seems" or "you're suggesting"
             7. Maintain the original speaker's intent and meaning
+            8. IMPORTANT: If the transcription is a question, do NOT answer it - just format the question
+            9. Never add any additional content - only format what was actually said
             
             Respond with only the formatted text, no explanations.
         `;
@@ -250,11 +317,14 @@ async function formatTranscription(audioBuffer) {
             4. Never summarize or interpret - keep it as direct speech
             5. Never add phrases like "it seems" or "you're suggesting"
             6. Maintain the original speaker's intent and meaning
+            7. IMPORTANT: If the transcription is a question, do NOT answer it - just format the question
+            8. Never add any additional content - only format what was actually said
             
             Respond with only the formatted text, no explanations.
         `;
     }
 
+    console.log('Sending to ChatGPT for formatting...');
     const response = await openai.chat.completions.create({
         model: "gpt-3.5-turbo",
         messages: [
@@ -264,13 +334,88 @@ async function formatTranscription(audioBuffer) {
             },
             {
                 role: "user",
-                content: audioBuffer
+                content: transcribedText  // Use the transcribed text here
             }
         ],
         temperature: 0.3,
     });
 
+    console.log('OpenAI processing complete');
     return response;
+}
+
+async function handleRecording(audioBuffer) {
+    console.log('--- Starting Transcription Process ---');
+    try {
+        // Initial status
+        mainWindow.webContents.send('transcription-status', {
+            message: 'Starting transcription...',
+            processing: true
+        });
+
+        console.log('Processing with OpenAI...');
+        mainWindow.webContents.send('transcription-status', {
+            message: 'Processing with AI...',
+            processing: true
+        });
+        
+        const formattedResponse = await formatTranscription(audioBuffer);
+        const formattedText = formattedResponse.choices[0].message.content;
+        
+        const activeWindow = await getActiveWindow();
+        console.log('Ready to inject text into:', activeWindow);
+        
+        if (activeWindow) {
+            // Update status for paste operation
+            console.log('Attempting to paste...');
+            mainWindow.webContents.send('transcription-status', {
+                message: `Pasting into ${activeWindow}...`,
+                processing: true
+            });
+            
+            const clipboard = require('electron').clipboard;
+            clipboard.writeText(formattedText);
+            
+            await new Promise((resolve) => {
+                exec(`osascript -e 'tell application "System Events" to keystroke "v" using command down'`, () => {
+                    console.log('Paste command completed');
+                    resolve();
+                });
+            });
+            
+            // Show success message
+            console.log('Text pasted successfully');
+            mainWindow.webContents.send('transcription-status', {
+                message: 'Text pasted successfully!',
+                processing: false
+            });
+            
+            // Reset to ready state after delay
+            setTimeout(() => {
+                mainWindow.webContents.send('transcription-status', {
+                    message: 'Ready',
+                    processing: false
+                });
+            }, 2000);
+        }
+        
+        return formattedText;
+    } catch (error) {
+        console.error('Error in handleRecording:', error);
+        mainWindow.webContents.send('transcription-status', {
+            message: 'Error occurred',
+            processing: false
+        });
+        
+        // Reset to ready state after error
+        setTimeout(() => {
+            mainWindow.webContents.send('transcription-status', {
+                message: 'Ready',
+                processing: false
+            });
+        }, 2000);
+        throw error;
+    }
 }
 
 ipcMain.handle('transcribe-audio', async (event, audioBuffer) => {
@@ -400,4 +545,11 @@ app.on('before-quit', () => {
 ipcMain.on('request-accessibility-status', (event) => {
     const isAccessibilityEnabled = checkAccessibilityPermissions();
     event.sender.send('accessibility-status', isAccessibilityEnabled);
+});
+
+// Add IPC handlers
+ipcMain.on('update-status-from-renderer', (event, data) => {
+    if (statusBarWindow && !statusBarWindow.isDestroyed()) {
+        statusBarWindow.webContents.send('update-status', data);
+    }
 }); 
