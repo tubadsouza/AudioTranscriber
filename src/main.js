@@ -211,6 +211,56 @@ app.whenReady().then(() => {
     }
 });
 
+async function formatTranscription(text) {
+    const openai = new OpenAI({
+        apiKey: process.env.OPENAI_API_KEY
+    });
+
+    const activeWindow = await getActiveWindow();
+    let formattingInstructions = "";
+
+    if (activeWindow.toLowerCase().includes('slack')) {
+        formattingInstructions = `
+            You are formatting text for Slack messages. Follow these rules:
+            1. Format the main message as natural conversational text without bullet points
+            2. For lists, determine if they should be numbered or bulleted:
+               - Use numbers (1., 2., 3.) for sequential steps or prioritized items
+               - Use bullets (•) for unordered lists or equal-weight items
+            3. Use Slack's formatting:
+               - *bold* for emphasis
+               - _italic_ for subtle emphasis
+               - \`code\` for technical terms
+               - \`\`\`code blocks\`\`\` for multiple lines of code
+               - > for quotes or highlighting important points
+            4. Keep the tone conversational and natural
+            5. Never start a message with a bullet point unless it's explicitly meant to be a list
+            6. Preserve question marks and natural speech patterns
+            7. Format multi-part questions as regular text, not lists
+
+            Respond with only the formatted text, no explanations.
+        `;
+    } else {
+        formattingInstructions = "Convert the transcript into natural, written text. Remove filler words and speech artifacts. Use basic markdown only when necessary. Do not add titles or headers. Respond with only the formatted text.";
+    }
+
+    const response = await openai.chat.completions.create({
+        model: "gpt-3.5-turbo",
+        messages: [
+            {
+                role: "system",
+                content: formattingInstructions
+            },
+            {
+                role: "user",
+                content: text
+            }
+        ],
+        temperature: 0.3,
+    });
+
+    return response;
+}
+
 ipcMain.handle('transcribe-audio', async (event, audioBuffer) => {
     try {
         console.log('\n--- Starting Transcription Process ---');
@@ -230,20 +280,7 @@ ipcMain.handle('transcribe-audio', async (event, audioBuffer) => {
         });
         
         // Then, format it using ChatGPT
-        const formattedResponse = await openaiClient.chat.completions.create({
-            model: "gpt-3.5-turbo",
-            messages: [
-                {
-                    role: "system",
-                    content: "You are a helpful assistant that formats text into clean markdown. Keep the original meaning but improve formatting, add headers where appropriate, and fix any obvious transcription errors."
-                },
-                {
-                    role: "user",
-                    content: transcription
-                }
-            ],
-            temperature: 0.7
-        });
+        const formattedResponse = await formatTranscription(transcription);
 
         // Clean up the temp file
         fs.unlinkSync(tempPath);
@@ -255,7 +292,7 @@ ipcMain.handle('transcribe-audio', async (event, audioBuffer) => {
         const activeWindow = await getActiveWindow();
         console.log('Ready to inject text into:', activeWindow);
         
-        if (activeWindow === 'Cursor') {
+        if (activeWindow) {  // If we have any active window
             // Copy to clipboard
             console.log('Copying to clipboard:', formattedText);
             const clipboard = require('electron').clipboard;
@@ -273,9 +310,11 @@ ipcMain.handle('transcribe-audio', async (event, audioBuffer) => {
                 if (error) {
                     console.error('Failed to paste:', error);
                 } else {
-                    console.log('Text pasted successfully');
+                    console.log('Text pasted successfully into:', activeWindow);
                 }
             });
+        } else {
+            console.log('No active window detected');
         }
         
         return formattedText;
