@@ -211,7 +211,9 @@ app.whenReady().then(() => {
     }
 });
 
-async function formatTranscription(text) {
+async function formatTranscription(audioBuffer) {
+    console.log('Starting formatTranscription...');
+    
     const openai = new OpenAI({
         apiKey: process.env.OPENAI_API_KEY
     });
@@ -221,26 +223,36 @@ async function formatTranscription(text) {
 
     if (activeWindow.toLowerCase().includes('slack')) {
         formattingInstructions = `
-            You are formatting text for Slack messages. Follow these rules:
-            1. Format the main message as natural conversational text without bullet points
-            2. For lists, determine if they should be numbered or bulleted:
-               - Use numbers (1., 2., 3.) for sequential steps or prioritized items
-               - Use bullets (•) for unordered lists or equal-weight items
+            Convert this transcription into a natural Slack message. Follow these rules:
+            1. Use first-person perspective always - never third person
+            2. Keep the conversational tone but remove filler words
             3. Use Slack's formatting:
                - *bold* for emphasis
                - _italic_ for subtle emphasis
                - \`code\` for technical terms
                - \`\`\`code blocks\`\`\` for multiple lines of code
-               - > for quotes or highlighting important points
-            4. Keep the tone conversational and natural
-            5. Never start a message with a bullet point unless it's explicitly meant to be a list
-            6. Preserve question marks and natural speech patterns
-            7. Format multi-part questions as regular text, not lists
-
+               - > for quotes
+            4. For lists:
+               - Use numbers (1., 2., 3.) for sequential steps
+               - Use bullets (•) for non-sequential items
+            5. Never summarize or interpret - keep it as direct speech
+            6. Never add phrases like "it seems" or "you're suggesting"
+            7. Maintain the original speaker's intent and meaning
+            
             Respond with only the formatted text, no explanations.
         `;
     } else {
-        formattingInstructions = "Convert the transcript into natural, written text. Remove filler words and speech artifacts. Use basic markdown only when necessary. Do not add titles or headers. Respond with only the formatted text.";
+        formattingInstructions = `
+            Convert this transcription into natural written text. Follow these rules:
+            1. Use first-person perspective always - never third person
+            2. Keep the conversational tone but remove filler words
+            3. Use basic markdown only when necessary
+            4. Never summarize or interpret - keep it as direct speech
+            5. Never add phrases like "it seems" or "you're suggesting"
+            6. Maintain the original speaker's intent and meaning
+            
+            Respond with only the formatted text, no explanations.
+        `;
     }
 
     const response = await openai.chat.completions.create({
@@ -252,7 +264,7 @@ async function formatTranscription(text) {
             },
             {
                 role: "user",
-                content: text
+                content: audioBuffer
             }
         ],
         temperature: 0.3,
