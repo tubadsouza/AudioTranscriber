@@ -263,116 +263,47 @@ ipcMain.on('audio-data', async (event, audioBuffer) => {
     }
 });
 
-async function formatTranscription(audioBuffer) {
-    console.log('Starting formatTranscription...');
-    
-    const openai = new OpenAI({
-        apiKey: process.env.OPENAI_API_KEY
-    });
-
-    // First transcribe the audio
-    console.log('Creating audio file for OpenAI...');
-    const audioFile = new File([audioBuffer], 'audio.wav', { type: 'audio/wav' });
-    
-    console.log('Sending to Whisper API...');
-    const transcriptionResponse = await openai.audio.transcriptions.create({
-        file: audioFile,
-        model: 'whisper-1',
-    });
-
-    const transcribedText = transcriptionResponse.text;
-    console.log('Transcribed text:', transcribedText);
-
-    const activeWindow = await getActiveWindow();
-    let formattingInstructions = "";
-
-    if (activeWindow.toLowerCase().includes('slack')) {
-        formattingInstructions = `
-            Convert this transcription into a natural Slack message. Follow these rules:
-            1. Use first-person perspective always - never third person
-            2. Keep the conversational tone but remove filler words
-            3. Use Slack's formatting:
-               - *bold* for emphasis
-               - _italic_ for subtle emphasis
-               - \`code\` for technical terms
-               - \`\`\`code blocks\`\`\` for multiple lines of code
-               - > for quotes
-            4. For lists:
-               - Use numbers (1., 2., 3.) for sequential steps
-               - Use bullets (•) for non-sequential items
-            5. Never summarize or interpret - keep it as direct speech
-            6. Never add phrases like "it seems" or "you're suggesting"
-            7. Maintain the original speaker's intent and meaning
-            8. IMPORTANT: If the transcription is a question, do NOT answer it - just format the question
-            9. Never add any additional content - only format what was actually said
-            
-            Respond with only the formatted text, no explanations.
-        `;
-    } else {
-        formattingInstructions = `
-            Convert this transcription into natural written text. Follow these rules:
-            1. Use first-person perspective always - never third person
-            2. Keep the conversational tone but remove filler words
-            3. Use basic markdown only when necessary
-            4. Never summarize or interpret - keep it as direct speech
-            5. Never add phrases like "it seems" or "you're suggesting"
-            6. Maintain the original speaker's intent and meaning
-            7. IMPORTANT: If the transcription is a question, do NOT answer it - just format the question
-            8. Never add any additional content - only format what was actually said
-            
-            Respond with only the formatted text, no explanations.
-        `;
-    }
-
-    console.log('Sending to ChatGPT for formatting...');
-    const response = await openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
-        messages: [
-            {
-                role: "system",
-                content: formattingInstructions
-            },
-            {
-                role: "user",
-                content: transcribedText  // Use the transcribed text here
-            }
-        ],
-        temperature: 0.3,
-    });
-
-    console.log('OpenAI processing complete');
-    return response;
-}
-
 async function handleRecording(audioBuffer) {
     console.log('--- Starting Transcription Process ---');
     try {
-        // Initial status
-        mainWindow.webContents.send('transcription-status', {
-            message: 'Starting transcription...',
-            processing: true
+        // Update status to processing
+        if (statusBarWindow && !statusBarWindow.isDestroyed()) {
+            statusBarWindow.webContents.send('update-status', {
+                message: 'Processing with AI...',
+                processing: true
+            });
+        }
+
+        // Initialize OpenAI
+        const openai = new OpenAI({
+            apiKey: process.env.OPENAI_API_KEY
         });
 
-        console.log('Processing with OpenAI...');
-        mainWindow.webContents.send('transcription-status', {
-            message: 'Processing with AI...',
-            processing: true
+        // Create a temporary file
+        const tempFilePath = path.join(os.tmpdir(), 'audio.wav');
+        fs.writeFileSync(tempFilePath, Buffer.from(audioBuffer));
+
+        // Get transcription from OpenAI using file path
+        const transcriptionResponse = await openai.audio.transcriptions.create({
+            file: fs.createReadStream(tempFilePath),
+            model: 'whisper-1',
         });
-        
-        const formattedResponse = await formatTranscription(audioBuffer);
+
+        // Clean up temp file
+        fs.unlinkSync(tempFilePath);
+
+        console.log('Got transcription:', transcriptionResponse.text);
+
+        // Format the transcription
+        const formattedResponse = await formatTranscription(transcriptionResponse.text);
         const formattedText = formattedResponse.choices[0].message.content;
         
+        // Get active window and paste
         const activeWindow = await getActiveWindow();
         console.log('Ready to inject text into:', activeWindow);
         
         if (activeWindow) {
-            // Update status for paste operation
-            console.log('Attempting to paste...');
-            mainWindow.webContents.send('transcription-status', {
-                message: `Pasting into ${activeWindow}...`,
-                processing: true
-            });
-            
+            console.log('Attempting to paste text:', formattedText);
             const clipboard = require('electron').clipboard;
             clipboard.writeText(formattedText);
             
@@ -383,104 +314,89 @@ async function handleRecording(audioBuffer) {
                 });
             });
             
-            // Show success message
             console.log('Text pasted successfully');
-            mainWindow.webContents.send('transcription-status', {
+        }
+        
+        // After successful paste, show success message
+        if (statusBarWindow && !statusBarWindow.isDestroyed()) {
+            statusBarWindow.webContents.send('update-status', {
                 message: 'Text pasted successfully!',
                 processing: false
             });
             
-            // Reset to ready state after delay
+            // Reset to ready state after 2 seconds
             setTimeout(() => {
-                mainWindow.webContents.send('transcription-status', {
-                    message: 'Ready',
-                    processing: false
-                });
+                if (statusBarWindow && !statusBarWindow.isDestroyed()) {
+                    statusBarWindow.webContents.send('update-status', {
+                        message: 'Ready',
+                        processing: false
+                    });
+                }
             }, 2000);
         }
-        
+
         return formattedText;
     } catch (error) {
         console.error('Error in handleRecording:', error);
-        mainWindow.webContents.send('transcription-status', {
-            message: 'Error occurred',
-            processing: false
-        });
-        
-        // Reset to ready state after error
-        setTimeout(() => {
-            mainWindow.webContents.send('transcription-status', {
-                message: 'Ready',
+        // Show error state
+        if (statusBarWindow && !statusBarWindow.isDestroyed()) {
+            statusBarWindow.webContents.send('update-status', {
+                message: 'Error occurred',
                 processing: false
             });
-        }, 2000);
+            
+            // Reset to ready state after error
+            setTimeout(() => {
+                if (statusBarWindow && !statusBarWindow.isDestroyed()) {
+                    statusBarWindow.webContents.send('update-status', {
+                        message: 'Ready',
+                        processing: false
+                    });
+                }
+            }, 2000);
+        }
         throw error;
     }
 }
 
-ipcMain.handle('transcribe-audio', async (event, audioBuffer) => {
-    try {
-        console.log('\n--- Starting Transcription Process ---');
-        console.log('Audio buffer size:', audioBuffer.byteLength);
-        
-        const openaiClient = initializeOpenAI();
-        const tempPath = path.join(app.getPath('userData'), `audio-${Date.now()}.wav`);
-        
-        const buffer = Buffer.from(audioBuffer);
-        fs.writeFileSync(tempPath, buffer);
-        
-        // First, get the transcription
-        const transcription = await openaiClient.audio.transcriptions.create({
-            file: fs.createReadStream(tempPath),
-            model: "whisper-1",
-            response_format: "text"
-        });
-        
-        // Then, format it using ChatGPT
-        const formattedResponse = await formatTranscription(transcription);
+async function formatTranscription(text) {
+    console.log('Starting formatTranscription...');
+    
+    const openai = new OpenAI({
+        apiKey: process.env.OPENAI_API_KEY
+    });
 
-        // Clean up the temp file
-        fs.unlinkSync(tempPath);
-        
-        // Return the formatted text
-        const formattedText = formattedResponse.choices[0].message.content;
-        console.log('Transcription formatted successfully');
-        
-        const activeWindow = await getActiveWindow();
-        console.log('Ready to inject text into:', activeWindow);
-        
-        if (activeWindow) {  // If we have any active window
-            // Copy to clipboard
-            console.log('Copying to clipboard:', formattedText);
-            const clipboard = require('electron').clipboard;
-            clipboard.writeText(formattedText);
-            
-            // Verify clipboard content
-            const clipboardText = clipboard.readText();
-            console.log('Clipboard content:', clipboardText);
-            
-            // Small delay to ensure clipboard is ready
-            await new Promise(resolve => setTimeout(resolve, 100));
-            
-            // Simulate CMD+V using applescript
-            exec(`osascript -e 'tell application "System Events" to keystroke "v" using command down'`, (error) => {
-                if (error) {
-                    console.error('Failed to paste:', error);
-                } else {
-                    console.log('Text pasted successfully into:', activeWindow);
-                }
-            });
-        } else {
-            console.log('No active window detected');
-        }
-        
-        return formattedText;
-
-    } catch (error) {
-        console.error('Transcription error:', error);
-        throw error;
+    const activeWindow = await getActiveWindow();
+    let formattingInstructions = "";
+    
+    if (activeWindow.toLowerCase().includes('slack')) {
+        formattingInstructions = "Format this transcription for Slack: fix punctuation, remove filler words, maintain original meaning.";
+    } else {
+        formattingInstructions = "Format this transcription: fix punctuation, remove filler words, maintain original meaning.";
     }
-});
+
+    try {
+        const completion = await openai.chat.completions.create({
+            model: "gpt-3.5-turbo",
+            messages: [
+                {
+                    role: "system",
+                    content: formattingInstructions
+                },
+                {
+                    role: "user",
+                    content: text
+                }
+            ],
+            temperature: 0.3,
+        });
+
+        return completion;
+    } catch (error) {
+        console.error('Error in ChatGPT formatting:', error);
+        return { choices: [{ message: { content: text } }] };
+    }
+}
 
 app.on('will-quit', () => {
     if (recordingTimeout) {
