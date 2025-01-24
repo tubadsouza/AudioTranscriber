@@ -28,7 +28,7 @@ let zPressed = false;
 let recordingTimeout = null;
 let statusBarWindow = null;
 let audioChunks = [];
-const CHUNK_BUFFER_SIZE = 3; // Process after collecting 3 chunks (6 seconds of audio)
+const CHUNK_BUFFER_SIZE = 3; // Process every 6 seconds (3 chunks of 2 seconds each)
 
 function createTemplateImage() {
     const image = nativeImage.createEmpty();
@@ -244,8 +244,79 @@ app.whenReady().then(() => {
     }
 });
 
-// Add this IPC handler near the top with other IPC handlers
+// Add function to process chunk buffer
+async function processChunkBuffer() {
+    try {
+        console.log('Processing chunk buffer...');
+        
+        // Create temp file for combined chunks
+        const tempFilePath = path.join(os.tmpdir(), `chunk-${Date.now()}.webm`);
+        
+        // Combine chunks and write directly as Buffer
+        const combinedBuffer = Buffer.concat(audioChunks);
+        await fs.promises.writeFile(tempFilePath, combinedBuffer);
+        
+        console.log(`Combined buffer size: ${combinedBuffer.length} bytes`);
+        
+        // Process with OpenAI
+        const openai = new OpenAI({
+            apiKey: process.env.OPENAI_API_KEY
+        });
+
+        console.log('Transcribing chunk buffer...');
+        const transcriptionResponse = await openai.audio.transcriptions.create({
+            file: fs.createReadStream(tempFilePath),
+            model: 'whisper-1',
+            language: 'en',
+            temperature: 0,
+            response_format: 'json'
+        });
+
+        // Clean up temp file
+        fs.unlinkSync(tempFilePath);
+
+        console.log('Chunk buffer transcription:', transcriptionResponse.text);
+        
+        // Clear processed chunks
+        audioChunks = [];
+        
+        return transcriptionResponse.text;
+    } catch (error) {
+        console.error('Error processing chunk buffer:', error);
+        // Don't clear chunks on error, so we can process them with the full recording
+        return null;
+    }
+}
+
+// Update the audio chunk handler
+ipcMain.on('audio-chunk', async (event, chunk) => {
+    try {
+        console.log(`Received chunk: ${chunk.length} bytes`);
+        audioChunks.push(chunk);
+        
+        // Log buffer status
+        console.log(`Chunk buffer status: ${audioChunks.length}/${CHUNK_BUFFER_SIZE}`);
+        
+        // Process when buffer is full
+        if (audioChunks.length >= CHUNK_BUFFER_SIZE) {
+            console.log('Buffer full, processing chunks...');
+            const transcribedText = await processChunkBuffer();
+            
+            if (transcribedText) {
+                console.log('Chunk processing successful:', transcribedText);
+                // For now, just log the result
+                // Later we can implement progressive updates
+            }
+        }
+    } catch (error) {
+        console.error('Error handling audio chunk:', error);
+    }
+});
+
+// Keep existing audio-data handler as fallback
 ipcMain.on('audio-data', async (event, audioBuffer) => {
+    // Clear any collected chunks when full recording is processed
+    audioChunks = [];
     console.log('Received audio data in main process, size:', audioBuffer.length);
     try {
         await handleRecording(audioBuffer);
@@ -262,26 +333,6 @@ ipcMain.on('audio-data', async (event, audioBuffer) => {
                 processing: false
             });
         }, 2000);
-    }
-});
-
-// Update the audio chunk handler
-ipcMain.on('audio-chunk', async (event, chunk) => {
-    try {
-        console.log(`Received chunk: ${chunk.length} bytes`);
-        audioChunks.push(chunk);
-        
-        // Log buffer status
-        console.log(`Chunk buffer status: ${audioChunks.length}/${CHUNK_BUFFER_SIZE}`);
-        
-        // For now, just log when we have enough chunks
-        if (audioChunks.length >= CHUNK_BUFFER_SIZE) {
-            const totalBytes = audioChunks.reduce((sum, chunk) => sum + chunk.length, 0);
-            console.log(`Buffer full! Total bytes collected: ${totalBytes}`);
-            // Don't clear the buffer yet, just log
-        }
-    } catch (error) {
-        console.error('Error handling audio chunk:', error);
     }
 });
 
@@ -383,163 +434,4 @@ async function handleRecording(audioBuffer) {
             statusBarWindow.webContents.send('update-status', {
                 message: 'Error occurred',
                 processing: false
-            });
-            
-            setTimeout(() => {
-                if (statusBarWindow && !statusBarWindow.isDestroyed()) {
-                    statusBarWindow.webContents.send('update-status', {
-                        message: 'Ready',
-                        processing: false
-                    });
-                }
-            }, 2000);
-        }
-        throw error;
-    }
-}
-
-async function formatTranscription(text) {
-    console.log('Starting formatTranscription...');
-    
-    const openai = new OpenAI({
-        apiKey: process.env.OPENAI_API_KEY
-    });
-
-    const activeWindow = await getActiveWindow();
-    let formattingInstructions = "";
-    
-    if (activeWindow.toLowerCase().includes('slack')) {
-        formattingInstructions = `
-            Convert this transcription into a natural Slack message. Follow these rules:
-
-            1. Minimal Formatting:
-               • Only use formatting when it adds real value
-               • Don't add quote arrows (>) unless it's an actual quote
-               • Only use *bold* for:
-                 - Names of people
-                 - Product names
-                 - Company names
-               • Only use \`code\` for:
-                 - Technical terms
-                 - File names
-                 - Commands
-               • Never format common words or phrases
-
-            2. Message Structure:
-               • Keep it conversational and natural
-               • Use proper punctuation
-               • Break long messages into shorter paragraphs
-               • Format questions with proper question marks
-               • Remove filler words (um, uh, like, you know)
-
-            3. Critical Rules:
-               • Never interpret or answer questions - only format what was said
-               • Use first-person perspective always
-               • Never add content that wasn't in the original
-               • Never add quote arrows (>) unless quoting someone else
-               • Keep the exact meaning and intent
-
-            Example:
-            Input: "um yeah so I was wondering if we did the engineering work for acme corp like was it more professional services?"
-            Output: "Did we do the engineering work for *Acme Corp*? Was it more professional services?"
-
-            Respond with only the formatted text, no explanations.
-        `;
-    } else {
-        formattingInstructions = "Format this transcription: fix punctuation, remove filler words, maintain original meaning.";
-    }
-
-    try {
-        const completion = await openai.chat.completions.create({
-            model: "gpt-3.5-turbo",
-            messages: [
-                {
-                    role: "system",
-                    content: formattingInstructions
-                },
-                {
-                    role: "user",
-                    content: text
-                }
-            ],
-            temperature: 0.3,
-        });
-
-        return completion;
-    } catch (error) {
-        console.error('Error in ChatGPT formatting:', error);
-        return { choices: [{ message: { content: text } }] };
-    }
-}
-
-app.on('will-quit', () => {
-    if (recordingTimeout) {
-        clearInterval(recordingTimeout);
-    }
-    globalShortcut.unregisterAll();
-});
-
-app.on('window-all-closed', (e) => {
-    if (!forceQuit) {
-        e.preventDefault();
-    }
-});
-
-ipcMain.on('close-app', () => {
-    console.log('Force quitting app...');
-    forceQuit = true;
-    
-    // Clean up in the correct order
-    try {
-        // First unregister shortcuts
-        globalShortcut.unregisterAll();
-        
-        // Then hide the window
-        if (mainWindow) {
-            mainWindow.hide();
-        }
-        
-        // Destroy the tray icon
-        if (tray) {
-            tray.destroy();
-            tray = null;
-        }
-        
-        // Finally destroy the window and quit
-        if (mainWindow) {
-            mainWindow.destroy();
-            mainWindow = null;
-        }
-        
-        // Use process.nextTick to ensure clean quit
-        process.nextTick(() => {
-            app.quit();
-        });
-        
-    } catch (error) {
-        console.error('Error during cleanup:', error);
-        // Force quit if there's an error
-        process.exit(0);
-    }
-});
-
-// Add IPC handlers first
-ipcMain.on('request-accessibility-status', (event) => {
-    const isAccessibilityEnabled = checkAccessibilityPermissions();
-    event.sender.send('accessibility-status', isAccessibilityEnabled);
-});
-
-ipcMain.on('update-status-from-renderer', (event, data) => {
-    if (statusBarWindow && !statusBarWindow.isDestroyed()) {
-        statusBarWindow.webContents.send('update-status', data);
-    }
-}); 
-
-// Then app event handlers
-app.on('before-quit', () => {
-    forceQuit = true;
-    if (mainWindow) {
-        mainWindow.removeAllListeners('close');
-        mainWindow.close();
-    }
-}); 
+           

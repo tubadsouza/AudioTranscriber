@@ -69,9 +69,13 @@ async function startRecording() {
         
         mediaRecorder = new MediaRecorder(stream);
         
-        mediaRecorder.ondataavailable = (e) => {
+        mediaRecorder.ondataavailable = async (e) => {
             console.log('Data available event:', e.data.size, 'bytes');
             chunks.push(e.data);
+            
+            // Send chunk to main process
+            const chunk = await e.data.arrayBuffer();
+            ipcRenderer.send('audio-chunk', new Uint8Array(chunk));
         };
         
         mediaRecorder.onstop = async () => {
@@ -181,40 +185,4 @@ mediaRecorder.addEventListener('stop', async () => {
                 text: data.text,
                 activeWindow: window.activeWindow || 'unknown'
             });
-            console.log('Transcription sent to main process');
-            
-        } catch (error) {
-            console.error('Error processing transcription:', error);
-        }
-    };
-});
-
-// Add listener for active window info from main process
-ipcRenderer.on('active-window-update', (event, windowName) => {
-    console.log('Active window updated:', windowName);
-    window.activeWindow = windowName;
-});
-
-// Update the keyboard shortcut handler
-ipcRenderer.on('shortcut-pressed', async (event, type) => {
-    if (type === 'keydown') {
-        if (!isRecording) {
-            console.log('Starting recording');
-            // Clear any pending stop timer
-            if (keyUpTimer) {
-                clearTimeout(keyUpTimer);
-                keyUpTimer = null;
-            }
-            await startRecording();
-        }
-    } else if (type === 'keyup') {
-        if (isRecording) {
-            console.log('Key released, setting stop timer');
-            // Set a timer before stopping
-            keyUpTimer = setTimeout(() => {
-                console.log('Stop timer expired, stopping recording');
-                stopRecording();
-            }, KEY_UP_DELAY);
-        }
-    }
-});
+            console.log('Transcription sent to main proc
