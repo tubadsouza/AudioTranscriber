@@ -4,6 +4,8 @@ const { marked } = require('marked');
 let mediaRecorder;
 let isRecording = false;
 let chunks = [];
+let keyUpTimer = null;
+const KEY_UP_DELAY = 300; // 300ms delay before stopping
 
 document.getElementById('closeButton').addEventListener('click', () => {
     ipcRenderer.send('close-app');
@@ -49,16 +51,22 @@ ipcRenderer.on('transcription-status', (event, data) => {
     updateStatus(data.message, data.processing);
 });
 
+function updateRecordButton(isRecording) {
+    const recordButton = document.getElementById('recordButton');
+    if (recordButton) {
+        recordButton.textContent = isRecording ? 'Stop Recording' : 'Start Recording';
+        recordButton.classList.toggle('recording', isRecording);
+    }
+}
+
 async function startRecording() {
     if (isRecording) return;
     
     try {
-        // First try with default settings to ensure it works
         const stream = await navigator.mediaDevices.getUserMedia({ 
             audio: true
         });
         
-        // Use default MediaRecorder settings
         mediaRecorder = new MediaRecorder(stream);
         
         mediaRecorder.ondataavailable = (e) => {
@@ -80,18 +88,21 @@ async function startRecording() {
             ipcRenderer.send('audio-data', new Uint8Array(arrayBuffer));
             chunks = [];
             isRecording = false;
+            updateRecordButton(false);
         };
         
         chunks = [];
-        mediaRecorder.start();
+        mediaRecorder.start(1000);  // Only change: added 1000ms chunk size
         isRecording = true;
+        updateRecordButton(true);
         updateStatus('Recording in progress...', true);
-        console.log('Started recording with default settings');
+        console.log('Started recording with 1-second chunks');
         
     } catch (error) {
         console.error('Error starting recording:', error);
         updateStatus('Error starting recording', false);
         isRecording = false;
+        updateRecordButton(false);
     }
 }
 
@@ -182,4 +193,28 @@ mediaRecorder.addEventListener('stop', async () => {
 ipcRenderer.on('active-window-update', (event, windowName) => {
     console.log('Active window updated:', windowName);
     window.activeWindow = windowName;
+});
+
+// Update the keyboard shortcut handler
+ipcRenderer.on('shortcut-pressed', async (event, type) => {
+    if (type === 'keydown') {
+        if (!isRecording) {
+            console.log('Starting recording');
+            // Clear any pending stop timer
+            if (keyUpTimer) {
+                clearTimeout(keyUpTimer);
+                keyUpTimer = null;
+            }
+            await startRecording();
+        }
+    } else if (type === 'keyup') {
+        if (isRecording) {
+            console.log('Key released, setting stop timer');
+            // Set a timer before stopping
+            keyUpTimer = setTimeout(() => {
+                console.log('Stop timer expired, stopping recording');
+                stopRecording();
+            }, KEY_UP_DELAY);
+        }
+    }
 });

@@ -268,46 +268,49 @@ async function handleRecording(audioBuffer) {
     const startTime = Date.now();
     
     try {
-        // Initialize OpenAI
-        const openai = new OpenAI({
-            apiKey: process.env.OPENAI_API_KEY
-        });
+        // Initialize OpenAI and create temp file in parallel
+        const [openai, tempFilePath] = await Promise.all([
+            (async () => new OpenAI({ apiKey: process.env.OPENAI_API_KEY }))(),
+            (async () => {
+                const filePath = path.join(os.tmpdir(), 'audio.wav');
+                await fs.promises.writeFile(filePath, Buffer.from(audioBuffer));
+                return filePath;
+            })()
+        ]);
 
-        // Create a temporary file
-        const tempFilePath = path.join(os.tmpdir(), 'audio.wav');
-        fs.writeFileSync(tempFilePath, Buffer.from(audioBuffer));
-
-        // Time the transcription
+        // Start transcription and get active window in parallel
         const transcriptionStartTime = Date.now();
-        console.log('Starting transcription...');
-        
-        const transcriptionResponse = await openai.audio.transcriptions.create({
-            file: fs.createReadStream(tempFilePath),
-            model: 'whisper-1',
-        });
+        const [transcriptionResponse, activeWindow] = await Promise.all([
+            openai.audio.transcriptions.create({
+                file: fs.createReadStream(tempFilePath),
+                model: 'whisper-1'
+            }),
+            getActiveWindow()
+        ]);
+
+        // Clean up temp file
+        fs.unlinkSync(tempFilePath);
 
         const transcriptionTime = Date.now() - transcriptionStartTime;
         console.log(`Transcription completed in ${transcriptionTime}ms`);
         console.log('Got transcription:', transcriptionResponse.text);
 
-        // Clean up temp file
-        fs.unlinkSync(tempFilePath);
-
-        // Time the formatting
+        // Format text and prepare clipboard in parallel
         const formattingStartTime = Date.now();
-        console.log('Starting text formatting...');
-        
-        const formattedResponse = await formatTranscription(transcriptionResponse.text);
+        const [formattedResponse, _] = await Promise.all([
+            formatTranscription(transcriptionResponse.text),
+            (async () => {
+                const clipboard = require('electron').clipboard;
+                clipboard.writeText(transcriptionResponse.text); // Pre-load clipboard while formatting
+            })()
+        ]);
+
         const formattedText = formattedResponse.choices[0].message.content;
-        
         const formattingTime = Date.now() - formattingStartTime;
         console.log(`Text formatting completed in ${formattingTime}ms`);
 
-        // Time the paste operation
+        // Paste operation
         const pasteStartTime = Date.now();
-        console.log('Starting paste operation...');
-        
-        const activeWindow = await getActiveWindow();
         if (activeWindow) {
             const clipboard = require('electron').clipboard;
             clipboard.writeText(formattedText);
@@ -330,7 +333,6 @@ async function handleRecording(audioBuffer) {
                 processing: false
             });
             
-            // Reset to ready state after 2 seconds
             setTimeout(() => {
                 if (statusBarWindow && !statusBarWindow.isDestroyed()) {
                     statusBarWindow.webContents.send('update-status', {
@@ -352,14 +354,12 @@ async function handleRecording(audioBuffer) {
         return formattedText;
     } catch (error) {
         console.error('Error in handleRecording:', error);
-        // Show error state
         if (statusBarWindow && !statusBarWindow.isDestroyed()) {
             statusBarWindow.webContents.send('update-status', {
                 message: 'Error occurred',
                 processing: false
             });
             
-            // Reset to ready state after error
             setTimeout(() => {
                 if (statusBarWindow && !statusBarWindow.isDestroyed()) {
                     statusBarWindow.webContents.send('update-status', {
@@ -384,7 +384,42 @@ async function formatTranscription(text) {
     let formattingInstructions = "";
     
     if (activeWindow.toLowerCase().includes('slack')) {
-        formattingInstructions = "Format this transcription for Slack: fix punctuation, remove filler words, maintain original meaning.";
+        formattingInstructions = `
+            Convert this transcription into a natural Slack message. Follow these rules:
+
+            1. Minimal Formatting:
+               • Only use formatting when it adds real value
+               • Don't add quote arrows (>) unless it's an actual quote
+               • Only use *bold* for:
+                 - Names of people
+                 - Product names
+                 - Company names
+               • Only use \`code\` for:
+                 - Technical terms
+                 - File names
+                 - Commands
+               • Never format common words or phrases
+
+            2. Message Structure:
+               • Keep it conversational and natural
+               • Use proper punctuation
+               • Break long messages into shorter paragraphs
+               • Format questions with proper question marks
+               • Remove filler words (um, uh, like, you know)
+
+            3. Critical Rules:
+               • Never interpret or answer questions - only format what was said
+               • Use first-person perspective always
+               • Never add content that wasn't in the original
+               • Never add quote arrows (>) unless quoting someone else
+               • Keep the exact meaning and intent
+
+            Example:
+            Input: "um yeah so I was wondering if we did the engineering work for acme corp like was it more professional services?"
+            Output: "Did we do the engineering work for *Acme Corp*? Was it more professional services?"
+
+            Respond with only the formatted text, no explanations.
+        `;
     } else {
         formattingInstructions = "Format this transcription: fix punctuation, remove filler words, maintain original meaning.";
     }
@@ -463,23 +498,23 @@ ipcMain.on('close-app', () => {
     }
 });
 
-app.on('before-quit', () => {
-    forceQuit = true;
-    if (mainWindow) {
-        mainWindow.removeAllListeners('close');
-        mainWindow.close();
-    }
-});
-
-// Add this IPC handler if it's not already there
+// Add IPC handlers first
 ipcMain.on('request-accessibility-status', (event) => {
     const isAccessibilityEnabled = checkAccessibilityPermissions();
     event.sender.send('accessibility-status', isAccessibilityEnabled);
 });
 
-// Add IPC handlers
 ipcMain.on('update-status-from-renderer', (event, data) => {
     if (statusBarWindow && !statusBarWindow.isDestroyed()) {
         statusBarWindow.webContents.send('update-status', data);
+    }
+}); 
+
+// Then app event handlers
+app.on('before-quit', () => {
+    forceQuit = true;
+    if (mainWindow) {
+        mainWindow.removeAllListeners('close');
+        mainWindow.close();
     }
 }); 
