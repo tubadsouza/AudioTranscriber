@@ -265,15 +265,9 @@ ipcMain.on('audio-data', async (event, audioBuffer) => {
 
 async function handleRecording(audioBuffer) {
     console.log('--- Starting Transcription Process ---');
+    const startTime = Date.now();
+    
     try {
-        // Update status to processing
-        if (statusBarWindow && !statusBarWindow.isDestroyed()) {
-            statusBarWindow.webContents.send('update-status', {
-                message: 'Processing with AI...',
-                processing: true
-            });
-        }
-
         // Initialize OpenAI
         const openai = new OpenAI({
             apiKey: process.env.OPENAI_API_KEY
@@ -283,27 +277,38 @@ async function handleRecording(audioBuffer) {
         const tempFilePath = path.join(os.tmpdir(), 'audio.wav');
         fs.writeFileSync(tempFilePath, Buffer.from(audioBuffer));
 
-        // Get transcription from OpenAI using file path
+        // Time the transcription
+        const transcriptionStartTime = Date.now();
+        console.log('Starting transcription...');
+        
         const transcriptionResponse = await openai.audio.transcriptions.create({
             file: fs.createReadStream(tempFilePath),
             model: 'whisper-1',
         });
 
+        const transcriptionTime = Date.now() - transcriptionStartTime;
+        console.log(`Transcription completed in ${transcriptionTime}ms`);
+        console.log('Got transcription:', transcriptionResponse.text);
+
         // Clean up temp file
         fs.unlinkSync(tempFilePath);
 
-        console.log('Got transcription:', transcriptionResponse.text);
-
-        // Format the transcription
+        // Time the formatting
+        const formattingStartTime = Date.now();
+        console.log('Starting text formatting...');
+        
         const formattedResponse = await formatTranscription(transcriptionResponse.text);
         const formattedText = formattedResponse.choices[0].message.content;
         
-        // Get active window and paste
-        const activeWindow = await getActiveWindow();
-        console.log('Ready to inject text into:', activeWindow);
+        const formattingTime = Date.now() - formattingStartTime;
+        console.log(`Text formatting completed in ${formattingTime}ms`);
+
+        // Time the paste operation
+        const pasteStartTime = Date.now();
+        console.log('Starting paste operation...');
         
+        const activeWindow = await getActiveWindow();
         if (activeWindow) {
-            console.log('Attempting to paste text:', formattedText);
             const clipboard = require('electron').clipboard;
             clipboard.writeText(formattedText);
             
@@ -313,11 +318,12 @@ async function handleRecording(audioBuffer) {
                     resolve();
                 });
             });
-            
-            console.log('Text pasted successfully');
         }
         
-        // After successful paste, show success message
+        const pasteTime = Date.now() - pasteStartTime;
+        console.log(`Paste operation completed in ${pasteTime}ms`);
+
+        // Show success message
         if (statusBarWindow && !statusBarWindow.isDestroyed()) {
             statusBarWindow.webContents.send('update-status', {
                 message: 'Text pasted successfully!',
@@ -334,6 +340,14 @@ async function handleRecording(audioBuffer) {
                 }
             }, 2000);
         }
+
+        // Log timing summary
+        const totalTime = Date.now() - startTime;
+        console.log(`\nTotal processing times:
+        Transcription: ${transcriptionTime}ms
+        Formatting: ${formattingTime}ms
+        Paste: ${pasteTime}ms
+        Total: ${totalTime}ms`);
 
         return formattedText;
     } catch (error) {

@@ -53,9 +53,13 @@ async function startRecording() {
     if (isRecording) return;
     
     try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // First try with default settings to ensure it works
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: true
+        });
+        
+        // Use default MediaRecorder settings
         mediaRecorder = new MediaRecorder(stream);
-        console.log('Got media stream:', stream.getAudioTracks()[0].label);
         
         mediaRecorder.ondataavailable = (e) => {
             console.log('Data available event:', e.data.size, 'bytes');
@@ -82,7 +86,7 @@ async function startRecording() {
         mediaRecorder.start();
         isRecording = true;
         updateStatus('Recording in progress...', true);
-        console.log('Started recording');
+        console.log('Started recording with default settings');
         
     } catch (error) {
         console.error('Error starting recording:', error);
