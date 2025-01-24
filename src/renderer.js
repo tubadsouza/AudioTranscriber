@@ -50,11 +50,12 @@ ipcRenderer.on('transcription-status', (event, data) => {
 });
 
 async function startRecording() {
+    if (isRecording) return;
+    
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        console.log('Got media stream:', stream.getAudioTracks()[0].label);
-        
         mediaRecorder = new MediaRecorder(stream);
+        console.log('Got media stream:', stream.getAudioTracks()[0].label);
         
         mediaRecorder.ondataavailable = (e) => {
             console.log('Data available event:', e.data.size, 'bytes');
@@ -65,13 +66,12 @@ async function startRecording() {
             console.log('MediaRecorder stopped, chunks:', chunks.length);
             updateStatus('Processing recording...', true);
             
-            const blob = new Blob(chunks, { type: 'audio/wav' });
+            const blob = new Blob(chunks, { type: 'audio/webm' });
             console.log('Audio blob size:', blob.size);
             
             const arrayBuffer = await blob.arrayBuffer();
             console.log('Array buffer size:', arrayBuffer.byteLength);
             
-            // Send to main process and wait for status updates
             updateStatus('Processing with AI...', true);
             ipcRenderer.send('audio-data', new Uint8Array(arrayBuffer));
             chunks = [];
@@ -83,14 +83,6 @@ async function startRecording() {
         isRecording = true;
         updateStatus('Recording in progress...', true);
         console.log('Started recording');
-        
-        // Auto-stop after 10 seconds
-        setTimeout(() => {
-            if (isRecording && mediaRecorder.state === 'recording') {
-                console.log('Auto-stopping recording after 10 seconds');
-                stopRecording();
-            }
-        }, 10000);
         
     } catch (error) {
         console.error('Error starting recording:', error);

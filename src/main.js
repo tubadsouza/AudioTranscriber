@@ -161,7 +161,7 @@ function registerShortcuts() {
                         mainWindow.webContents.send('stop-recording', { activeApp });
                     }
                 }
-            }, 50);
+            }, 200);
         }
     });
 }
