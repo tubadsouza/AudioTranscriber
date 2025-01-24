@@ -27,6 +27,7 @@ let shiftPressed = false;
 let zPressed = false;
 let recordingTimeout = null;
 let statusBarWindow = null;
+let audioChunks = [];
 
 function createTemplateImage() {
     const image = nativeImage.createEmpty();
@@ -263,11 +264,20 @@ ipcMain.on('audio-data', async (event, audioBuffer) => {
     }
 });
 
+// Add new IPC handler for audio chunks
+ipcMain.on('audio-chunk', async (event, chunk) => {
+    console.log('Received audio chunk:', chunk.length, 'bytes');
+    audioChunks.push(chunk);
+});
+
 async function handleRecording(audioBuffer) {
     console.log('--- Starting Transcription Process ---');
     const startTime = Date.now();
     
     try {
+        // Log the buffer size we're processing
+        console.log('Processing audio buffer:', audioBuffer.length, 'bytes');
+        
         // Initialize OpenAI and create temp file in parallel
         const [openai, tempFilePath] = await Promise.all([
             (async () => new OpenAI({ apiKey: process.env.OPENAI_API_KEY }))(),

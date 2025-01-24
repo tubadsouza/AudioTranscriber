@@ -69,9 +69,13 @@ async function startRecording() {
         
         mediaRecorder = new MediaRecorder(stream);
         
-        mediaRecorder.ondataavailable = (e) => {
+        mediaRecorder.ondataavailable = async (e) => {
             console.log('Data available event:', e.data.size, 'bytes');
             chunks.push(e.data);
+            
+            // Send chunk to main process
+            const chunk = await e.data.arrayBuffer();
+            ipcRenderer.send('audio-chunk', new Uint8Array(chunk));
         };
         
         mediaRecorder.onstop = async () => {
@@ -92,11 +96,11 @@ async function startRecording() {
         };
         
         chunks = [];
-        mediaRecorder.start(1000);  // Only change: added 1000ms chunk size
+        mediaRecorder.start(1000);  // 1-second chunks
         isRecording = true;
         updateRecordButton(true);
         updateStatus('Recording in progress...', true);
-        console.log('Started recording with 1-second chunks');
+        console.log('Started recording with chunk processing');
         
     } catch (error) {
         console.error('Error starting recording:', error);
