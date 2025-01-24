@@ -28,6 +28,7 @@ let zPressed = false;
 let recordingTimeout = null;
 let statusBarWindow = null;
 let audioChunks = [];
+const CHUNK_BUFFER_SIZE = 3; // Process after collecting 3 chunks (6 seconds of audio)
 
 function createTemplateImage() {
     const image = nativeImage.createEmpty();
@@ -264,10 +265,24 @@ ipcMain.on('audio-data', async (event, audioBuffer) => {
     }
 });
 
-// Add new IPC handler for audio chunks
+// Update the audio chunk handler
 ipcMain.on('audio-chunk', async (event, chunk) => {
-    console.log('Received audio chunk:', chunk.length, 'bytes');
-    audioChunks.push(chunk);
+    try {
+        console.log(`Received chunk: ${chunk.length} bytes`);
+        audioChunks.push(chunk);
+        
+        // Log buffer status
+        console.log(`Chunk buffer status: ${audioChunks.length}/${CHUNK_BUFFER_SIZE}`);
+        
+        // For now, just log when we have enough chunks
+        if (audioChunks.length >= CHUNK_BUFFER_SIZE) {
+            const totalBytes = audioChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+            console.log(`Buffer full! Total bytes collected: ${totalBytes}`);
+            // Don't clear the buffer yet, just log
+        }
+    } catch (error) {
+        console.error('Error handling audio chunk:', error);
+    }
 });
 
 async function handleRecording(audioBuffer) {
